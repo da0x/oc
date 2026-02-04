@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:edge
+
+    steps:
+      - name: Install dependencies
+        run: |
+          apk add --no-cache g++ make git
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check GCC version
+        run: g++ --version
+
+      - name: Build all tools
+        run: make all
+
+      - name: Run model validation tests
+        run: make test
+
+      - name: Generate outputs
+        run: |
+          for mdl in models/*.mdl; do
+            ./bin/mdl_to_oc "$mdl"
+            ./bin/mdl_to_yaml "$mdl"
+            ./bin/mdl_to_cpp "$mdl"
+          done
+
+      - name: Upload generated artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-outputs
+          path: |
+            *-oc/
+            *-yaml/
+            *-cpp/

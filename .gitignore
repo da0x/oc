@@ -10,6 +10,11 @@ tools/mdl_to_oc/mdl_to_oc
 tools/mdl_to_yaml/mdl_to_yaml
 tools/mdl_to_cpp/mdl_to_cpp
 tools/mdl_dump/mdl_dump
+tools/mdl_lint/mdl_lint
+
+# Report archives
+*_report.tar.gz
+*_report.zip
 
 # Generated output directories
 *-oc/
