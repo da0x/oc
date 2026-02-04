@@ -9,17 +9,19 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    container:
+      image: alpine:edge
 
     steps:
+      - name: Install dependencies
+        run: |
+          apk add --no-cache g++ make git
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install GCC 13
-        run: |
-          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-          sudo apt-get install -y g++-13
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100
+      - name: Check GCC version
+        run: g++ --version
 
       - name: Build all tools
         run: make all
