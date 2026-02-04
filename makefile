@@ -1,0 +1,63 @@
+# Open Controls - Root Makefile
+# Copyright (C) 2026 Daher Alfawares
+
+CXX := g++
+CXXFLAGS := -std=c++23 -Wall -Wextra -Wpedantic -O2
+
+BIN_DIR := bin
+TOOLS_DIR := tools
+
+# Tool definitions
+TOOLS := mdl_to_oc mdl_to_yaml mdl_to_cpp mdl_dump
+
+.PHONY: all clean install uninstall $(TOOLS)
+
+all: $(BIN_DIR) $(TOOLS)
+
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
+mdl_to_oc: $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) -o $(BIN_DIR)/$@ $(TOOLS_DIR)/mdl_to_oc/main.cpp
+
+mdl_to_yaml: $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) -o $(BIN_DIR)/$@ $(TOOLS_DIR)/mdl_to_yaml/main.cpp
+
+mdl_to_cpp: $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) -o $(BIN_DIR)/$@ $(TOOLS_DIR)/mdl_to_cpp/main.cpp
+
+mdl_dump: $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) -o $(BIN_DIR)/$@ $(TOOLS_DIR)/mdl_dump/main.cpp
+
+clean:
+	rm -rf $(BIN_DIR)
+	rm -f $(TOOLS_DIR)/mdl_to_oc/mdl_to_oc
+	rm -f $(TOOLS_DIR)/mdl_to_yaml/mdl_to_yaml
+	rm -f $(TOOLS_DIR)/mdl_to_cpp/mdl_to_cpp
+	rm -f $(TOOLS_DIR)/mdl_dump/mdl_dump
+
+install: all
+	install -d /usr/local/bin
+	install -m 755 $(BIN_DIR)/mdl_to_oc /usr/local/bin/
+	install -m 755 $(BIN_DIR)/mdl_to_yaml /usr/local/bin/
+	install -m 755 $(BIN_DIR)/mdl_to_cpp /usr/local/bin/
+
+uninstall:
+	rm -f /usr/local/bin/mdl_to_oc
+	rm -f /usr/local/bin/mdl_to_yaml
+	rm -f /usr/local/bin/mdl_to_cpp
+
+help:
+	@echo "Open Controls Build System"
+	@echo ""
+	@echo "Targets:"
+	@echo "  all       - Build all tools (default)"
+	@echo "  clean     - Remove build artifacts"
+	@echo "  install   - Install tools to /usr/local/bin"
+	@echo "  uninstall - Remove installed tools"
+	@echo ""
+	@echo "Individual tools:"
+	@echo "  mdl_to_oc   - MDL to OC/YAML converter"
+	@echo "  mdl_to_yaml - MDL to YAML converter"
+	@echo "  mdl_to_cpp  - MDL to C++ code generator"
+	@echo "  mdl_dump    - MDL structure inspector"

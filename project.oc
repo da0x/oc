@@ -1,0 +1,138 @@
+namespace project {
+    element thermal_regulator {
+        frequency 1 kHz;
+
+        input:
+            float setpoint;
+            float temprature;
+
+        output:
+            float heating;
+            float cooling;
+
+        memory:
+            float error;
+
+        operation {
+            mem.error = in.setpoint - in.temprature;
+logistic.in.x = mem.error;
+logistic();
+out.heating = logistic.out.control_signal * max(0.0f, mem.error);
+out.cooling = logistic.out.control_signal * max(0.0f, -mem.error);
+
+        }
+    }
+
+    element humidity_regulator {
+        frequency 1 kHz;
+
+        input:
+            float setpoint;
+            float humidity;
+
+        output:
+            float command;
+
+        memory:
+            float error;
+            float c;
+
+        operation {
+            
+logistic.in.x = mem.error = in.setpoint - in.humidity;
+logistic();
+out.command = logistic.out.control_signal * max(0.0f, mem.error);
+
+
+        }
+    }
+
+    element real_to_vec2 {
+        frequency 1 kHz;
+
+        input:
+            float x;
+            float y;
+
+        operation {
+            out.z.x = in.x;
+out.z.y = in.y;
+
+        }
+    }
+
+    element vec2_to_real {
+        frequency 1 kHz;
+
+        output:
+            float x;
+            float y;
+
+        operation {
+            out.x = in.v.x;
+out.y = in.v.y;
+
+        }
+    }
+
+    element low_pass_filter {
+        frequency 1 kHz;
+
+        input:
+            float current_value = 0e+0;
+            float smoothing_factor = 0.1f;
+
+        output:
+            float filtered;
+
+        memory:
+            float previous_value = 0e+0;
+
+        operation {
+            out.filtered =
+    in.smoothing_factor * timestep * in.current_value +
+    (1.0f - in.smoothing_factor * timestep) * mem.previous_value;
+
+mem.previous_value = out.filtered;
+
+        }
+    }
+
+    element debug {
+        frequency 1 kHz;
+
+        output:
+            float time;
+            float timestep;
+
+        operation {
+            out.time += timestep;
+out.timestep = timestep;
+
+        }
+    }
+
+    function logistic {
+        input:
+            float x;
+        output:
+            float control_signal;
+        operation {
+            out.control_signal = 1.0f / (1.0f + std::exp(-in.x));
+
+        }
+    }
+
+    controller thermal_controller {
+        element element::thermal_regulator thermal_regulator_element;
+        element element::low_pass_filter lpfc;
+        element element::low_pass_filter lpfh;
+        element element::debug debug_element;
+    }
+
+    controller humidity_controller {
+        element element::humidity_regulator hr;
+        element element::low_pass_filter lpf;
+    }
+
+}
