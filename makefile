@@ -6,11 +6,15 @@ CXXFLAGS := -std=c++23 -Wall -Wextra -Wpedantic -O2
 
 BIN_DIR := bin
 TOOLS_DIR := tools
+MODELS_DIR := models
 
 # Tool definitions
-TOOLS := mdl_to_oc mdl_to_yaml mdl_to_cpp mdl_dump
+TOOLS := mdl_to_oc mdl_to_yaml mdl_to_cpp mdl_dump mdl_lint
 
-.PHONY: all clean install uninstall $(TOOLS)
+# Find all MDL files in models directory
+MDL_FILES := $(wildcard $(MODELS_DIR)/*.mdl)
+
+.PHONY: all clean install uninstall test $(TOOLS) help
 
 all: $(BIN_DIR) $(TOOLS)
 
@@ -29,35 +33,53 @@ mdl_to_cpp: $(BIN_DIR)
 mdl_dump: $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) -o $(BIN_DIR)/$@ $(TOOLS_DIR)/mdl_dump/main.cpp
 
+mdl_lint: $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) -o $(BIN_DIR)/$@ $(TOOLS_DIR)/mdl_lint/main.cpp
+
+test: mdl_lint
+	@echo ""
+	@echo "Running MDL lint on all models in $(MODELS_DIR)/"
+	@echo ""
+	@if [ -z "$(MDL_FILES)" ]; then \
+		echo "No .mdl files found in $(MODELS_DIR)/"; \
+		exit 1; \
+	fi
+	@$(BIN_DIR)/mdl_lint $(MDL_FILES)
+
 clean:
 	rm -rf $(BIN_DIR)
 	rm -f $(TOOLS_DIR)/mdl_to_oc/mdl_to_oc
 	rm -f $(TOOLS_DIR)/mdl_to_yaml/mdl_to_yaml
 	rm -f $(TOOLS_DIR)/mdl_to_cpp/mdl_to_cpp
 	rm -f $(TOOLS_DIR)/mdl_dump/mdl_dump
+	rm -f $(TOOLS_DIR)/mdl_lint/mdl_lint
 
 install: all
 	install -d /usr/local/bin
 	install -m 755 $(BIN_DIR)/mdl_to_oc /usr/local/bin/
 	install -m 755 $(BIN_DIR)/mdl_to_yaml /usr/local/bin/
 	install -m 755 $(BIN_DIR)/mdl_to_cpp /usr/local/bin/
+	install -m 755 $(BIN_DIR)/mdl_lint /usr/local/bin/
 
 uninstall:
 	rm -f /usr/local/bin/mdl_to_oc
 	rm -f /usr/local/bin/mdl_to_yaml
 	rm -f /usr/local/bin/mdl_to_cpp
+	rm -f /usr/local/bin/mdl_lint
 
 help:
 	@echo "Open Controls Build System"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all       - Build all tools (default)"
+	@echo "  test      - Run mdl_lint on all models in models/"
 	@echo "  clean     - Remove build artifacts"
 	@echo "  install   - Install tools to /usr/local/bin"
 	@echo "  uninstall - Remove installed tools"
 	@echo ""
 	@echo "Individual tools:"
-	@echo "  mdl_to_oc   - MDL to OC/YAML converter"
-	@echo "  mdl_to_yaml - MDL to YAML converter"
+	@echo "  mdl_to_oc   - MDL to OC format converter"
+	@echo "  mdl_to_yaml - MDL to YAML schema converter"
 	@echo "  mdl_to_cpp  - MDL to C++ code generator"
 	@echo "  mdl_dump    - MDL structure inspector"
+	@echo "  mdl_lint    - MDL model validator"

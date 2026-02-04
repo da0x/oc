@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install GCC 13
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y g++-13
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100
+
+      - name: Build all tools
+        run: make all
+
+      - name: Run model validation tests
+        run: make test
+
+      - name: Generate outputs
+        run: |
+          for mdl in models/*.mdl; do
+            ./bin/mdl_to_oc "$mdl"
+            ./bin/mdl_to_yaml "$mdl"
+            ./bin/mdl_to_cpp "$mdl"
+          done
+
+      - name: Upload generated artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-outputs
+          path: |
+            *-oc/
+            *-yaml/
+            *-cpp/
