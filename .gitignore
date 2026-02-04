@@ -1,0 +1,44 @@
+# Build artifacts
+/bin/
+*.o
+*.a
+*.so
+*.dylib
+
+# Tool binaries (in subdirectories)
+tools/mdl_to_oc/mdl_to_oc
+tools/mdl_to_yaml/mdl_to_yaml
+tools/mdl_to_cpp/mdl_to_cpp
+tools/mdl_dump/mdl_dump
+
+# Generated output directories
+*-oc/
+*-yaml/
+*-cpp/
+
+# Editor and IDE files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-*
+.project
+.cproject
+.settings/
+compile_commands.json
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.bak
+
+# Debug files
+*.dSYM/
+*.pdb
