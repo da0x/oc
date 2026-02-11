@@ -12,6 +12,7 @@
 #include "../libmdl/oc_mdl.hpp"
 #include "../mdl_to_yaml/yaml_writer.hpp"
 #include "oc_writer.hpp"
+#include "metadata_writer.hpp"
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -168,6 +169,17 @@ auto main(int argc, char* argv[]) -> int {
 
     std::println("\nExported {} YAML schema(s) to {}/", yaml_exported, yaml_dir);
     std::println("Exported {} OC file(s) to {}/", oc_exported, oc_dir);
+
+    // Export metadata
+    oc::metadata_writer meta_writer;
+    auto meta = meta_writer.build_metadata(model, parser.get_opc());
+
+    auto metadata_path = fs::path(oc_dir) / (model_name + ".oc.metadata");
+    if (oc::metadata::write_file(metadata_path.string(), meta)) {
+        std::println("Exported metadata to {}", metadata_path.string());
+    } else {
+        std::println(stderr, "Error: Could not write metadata file");
+    }
 
     return 0;
 }

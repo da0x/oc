@@ -9,7 +9,7 @@ TOOLS_DIR := tools
 MODELS_DIR := models
 
 # Tool definitions
-TOOLS := mdl_to_oc mdl_to_yaml mdl_to_cpp mdl_dump mdl_lint
+TOOLS := mdl_to_oc mdl_to_yaml mdl_to_cpp mdl_dump mdl_lint oc_to_mdl
 
 # Find all MDL files in models directory
 MDL_FILES := $(wildcard $(MODELS_DIR)/*.mdl)
@@ -36,6 +36,9 @@ mdl_dump: $(BIN_DIR)
 mdl_lint: $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) -o $(BIN_DIR)/$@ $(TOOLS_DIR)/mdl_lint/main.cpp
 
+oc_to_mdl: $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) -o $(BIN_DIR)/$@ $(TOOLS_DIR)/oc_to_mdl/main.cpp
+
 test: mdl_lint
 	@echo ""
 	@echo "Running MDL lint on all models in $(MODELS_DIR)/"
@@ -53,6 +56,7 @@ clean:
 	rm -f $(TOOLS_DIR)/mdl_to_cpp/mdl_to_cpp
 	rm -f $(TOOLS_DIR)/mdl_dump/mdl_dump
 	rm -f $(TOOLS_DIR)/mdl_lint/mdl_lint
+	rm -f $(TOOLS_DIR)/oc_to_mdl/oc_to_mdl
 
 install: all
 	install -d /usr/local/bin
@@ -60,12 +64,14 @@ install: all
 	install -m 755 $(BIN_DIR)/mdl_to_yaml /usr/local/bin/
 	install -m 755 $(BIN_DIR)/mdl_to_cpp /usr/local/bin/
 	install -m 755 $(BIN_DIR)/mdl_lint /usr/local/bin/
+	install -m 755 $(BIN_DIR)/oc_to_mdl /usr/local/bin/
 
 uninstall:
 	rm -f /usr/local/bin/mdl_to_oc
 	rm -f /usr/local/bin/mdl_to_yaml
 	rm -f /usr/local/bin/mdl_to_cpp
 	rm -f /usr/local/bin/mdl_lint
+	rm -f /usr/local/bin/oc_to_mdl
 
 help:
 	@echo "Open Controls Build System"
@@ -83,3 +89,4 @@ help:
 	@echo "  mdl_to_cpp  - MDL to C++ code generator"
 	@echo "  mdl_dump    - MDL structure inspector"
 	@echo "  mdl_lint    - MDL model validator"
+	@echo "  oc_to_mdl   - OC to MDL format converter"

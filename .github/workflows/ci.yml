@@ -37,6 +37,15 @@ jobs:
             ./bin/mdl_to_cpp "$mdl"
           done
 
+      - name: Round-trip test (mdl_to_oc → oc_to_mdl)
+        run: |
+          for mdl in models/*.mdl; do
+            name=$(basename "$mdl" .mdl)
+            echo "Round-trip test: $name"
+            ./bin/oc_to_mdl "${name}-oc/" -o "${name}_roundtrip.mdl"
+            echo "  Generated ${name}_roundtrip.mdl"
+          done
+
       - name: Upload generated artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -45,3 +54,4 @@ jobs:
             *-oc/
             *-yaml/
             *-cpp/
+            *_roundtrip.mdl

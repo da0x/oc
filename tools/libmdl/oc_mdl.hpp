@@ -314,6 +314,7 @@ namespace oc::mdl {
         std::string destination;
         std::vector<int> points;
         std::vector<branch> branches;
+        std::string labels;
 
         [[nodiscard]] auto source_endpoint() const { return endpoint::parse(source); }
         [[nodiscard]] auto destination_endpoint() const { return endpoint::parse(destination); }
@@ -328,6 +329,9 @@ namespace oc::mdl {
         std::string name;
         std::vector<int> location;
         int zoom_factor = 100;
+        int sid_highwatermark = 0;
+        std::string open;
+        std::string report_name;
 
         std::vector<block> blocks;
         std::vector<connection> connections;
@@ -486,10 +490,17 @@ namespace oc::mdl {
             auto root = parser.parse(xml_content);
 
             for (const auto* p : root.children_by_tag("P")) {
-                if (p->attr("Name") == "Location") {
+                auto pname = p->attr("Name");
+                if (pname == "Location") {
                     sys.location = parse_int_array(p->text);
-                } else if (p->attr("Name") == "ZoomFactor") {
+                } else if (pname == "ZoomFactor") {
                     sys.zoom_factor = std::stoi(p->text);
+                } else if (pname == "SIDHighWatermark") {
+                    sys.sid_highwatermark = std::stoi(p->text);
+                } else if (pname == "Open") {
+                    sys.open = p->text;
+                } else if (pname == "ReportName") {
+                    sys.report_name = p->text;
                 }
             }
 
@@ -595,6 +606,8 @@ namespace oc::mdl {
                     conn.destination = p->text;
                 } else if (name == "Points") {
                     conn.points = parse_int_array(p->text);
+                } else if (name == "Labels") {
+                    conn.labels = p->text;
                 }
             }
 
@@ -673,6 +686,7 @@ namespace oc::mdl {
         }
 
         [[nodiscard]] auto get_model() const -> const model& { return model_; }
+        [[nodiscard]] auto get_opc() const -> const opc_extractor& { return opc_; }
 
     private:
         void parse_blockdiagram(std::string_view xml_content) {
