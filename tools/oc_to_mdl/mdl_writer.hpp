@@ -52,6 +52,7 @@ namespace oc {
                 }
             }
 
+            out << "__MWOPC_PACKAGE_END__\n";
             return out.str();
         }
 
@@ -95,7 +96,19 @@ namespace oc {
                        generate_default_blockdiagram(uuid, model_name));
             write_part(out, "/simulink/configSet0.xml", generate_default_config_set());
             write_part(out, "/simulink/configSetInfo.xml", generate_default_config_set_info());
-            write_part(out, "/simulink/modelDictionary.xml", generate_default_model_dictionary());
+            write_part(out, "/simulink/modelDictionary.xml", generate_default_model_dictionary(uuid));
+
+            // Count total elements to generate system IDs
+            int total_elements = 0;
+            for (const auto& file : oc_files) {
+                for (const auto& ns : file.namespaces) {
+                    total_elements += static_cast<int>(ns.elements.size());
+                }
+            }
+
+            // Generate .rels for system_root (references all child systems)
+            write_part(out, "/simulink/systems/_rels/system_root.xml.rels",
+                       generate_default_system_rels(1, total_elements));
 
             // Generate system_root with subsystem blocks for each element
             auto root_xml = generate_default_root_system(oc_files);
@@ -115,6 +128,7 @@ namespace oc {
 
             write_part(out, "/simulink/windowsInfo.xml", generate_default_windows_info());
 
+            out << "__MWOPC_PACKAGE_END__\n";
             return out.str();
         }
 
@@ -408,13 +422,19 @@ namespace oc {
         [[nodiscard]] auto generate_default_config_set_info() -> std::string {
             return R"(<?xml version="1.0" encoding="utf-8"?>
 <ConfigSetInfo>
-  <ConfigSet Ref="configSet0" Active="true"/>
+  <ConfigSet PartName="/simulink/configSet0.xml" Active="true">Configuration</ConfigSet>
 </ConfigSetInfo>)";
         }
 
-        [[nodiscard]] auto generate_default_model_dictionary() -> std::string {
-            return R"(<?xml version="1.0" encoding="utf-8"?>
-<ModelDictionary/>)";
+        [[nodiscard]] auto generate_default_model_dictionary([[maybe_unused]] const std::string& uuid) -> std::string {
+            auto sys_uuid = generate_uuid();
+            auto iface_uuid = generate_uuid();
+            return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                   "<MF0 version=\"1.1\" defaultPackage=\"slid\" packageUris=\"http://schema.mathworks.com/mf0/slid/R2023a_20220628\">\n"
+                   "  <System type=\"System\" uuid=\"" + sys_uuid + "\">\n"
+                   "    <Interface type=\"Interface\" uuid=\"" + iface_uuid + "\"/>\n"
+                   "  </System>\n"
+                   "</MF0>";
         }
 
         [[nodiscard]] auto generate_default_windows_info() -> std::string {
@@ -439,6 +459,15 @@ namespace oc {
             out << "<System>\n";
             out << "  <P Name=\"Location\">[-1, -8, 1921, 1153]</P>\n";
             out << "  <P Name=\"ZoomFactor\">100</P>\n";
+
+            // Count total elements for SIDHighWatermark
+            int total_sids = 0;
+            for (const auto& file : oc_files) {
+                for (const auto& ns : file.namespaces) {
+                    total_sids += static_cast<int>(ns.elements.size());
+                }
+            }
+            out << "  <P Name=\"SIDHighWatermark\">" << total_sids << "</P>\n";
 
             int sid = 1;
             int x = 100;
@@ -531,6 +560,22 @@ namespace oc {
             }
 
             out << "</System>";
+            return out.str();
+        }
+
+        // ─── System .rels generators ────────────────────────────────────────
+
+        [[nodiscard]] auto generate_default_system_rels(int start_id, int count) -> std::string {
+            std::ostringstream out;
+            out << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\" ?>\n";
+            out << "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n";
+            for (int i = 0; i < count; ++i) {
+                int id = start_id + i;
+                out << "  <Relationship Id=\"system_" << id
+                    << "\" Target=\"system_" << id
+                    << ".xml\" Type=\"http://schemas.mathworks.com/simulink/2010/relationships/system\"/>\n";
+            }
+            out << "</Relationships>";
             return out.str();
         }
 
