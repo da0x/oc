@@ -52,6 +52,7 @@ namespace oc {
                 }
             }
 
+            out << "__MWOPC_PACKAGE_END__\n";
             return out.str();
         }
 
@@ -95,7 +96,7 @@ namespace oc {
                        generate_default_blockdiagram(uuid, model_name));
             write_part(out, "/simulink/configSet0.xml", generate_default_config_set());
             write_part(out, "/simulink/configSetInfo.xml", generate_default_config_set_info());
-            write_part(out, "/simulink/modelDictionary.xml", generate_default_model_dictionary());
+            write_part(out, "/simulink/modelDictionary.xml", generate_default_model_dictionary(uuid));
 
             // Count total elements to generate system IDs
             int total_elements = 0;
@@ -127,6 +128,7 @@ namespace oc {
 
             write_part(out, "/simulink/windowsInfo.xml", generate_default_windows_info());
 
+            out << "__MWOPC_PACKAGE_END__\n";
             return out.str();
         }
 
@@ -420,13 +422,19 @@ namespace oc {
         [[nodiscard]] auto generate_default_config_set_info() -> std::string {
             return R"(<?xml version="1.0" encoding="utf-8"?>
 <ConfigSetInfo>
-  <ConfigSet Ref="configSet0" Active="true"/>
+  <ConfigSet PartName="/simulink/configSet0.xml" Active="true">Configuration</ConfigSet>
 </ConfigSetInfo>)";
         }
 
-        [[nodiscard]] auto generate_default_model_dictionary() -> std::string {
-            return R"(<?xml version="1.0" encoding="utf-8"?>
-<ModelDictionary/>)";
+        [[nodiscard]] auto generate_default_model_dictionary([[maybe_unused]] const std::string& uuid) -> std::string {
+            auto sys_uuid = generate_uuid();
+            auto iface_uuid = generate_uuid();
+            return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                   "<MF0 version=\"1.1\" defaultPackage=\"slid\" packageUris=\"http://schema.mathworks.com/mf0/slid/R2023a_20220628\">\n"
+                   "  <System type=\"System\" uuid=\"" + sys_uuid + "\">\n"
+                   "    <Interface type=\"Interface\" uuid=\"" + iface_uuid + "\"/>\n"
+                   "  </System>\n"
+                   "</MF0>";
         }
 
         [[nodiscard]] auto generate_default_windows_info() -> std::string {
