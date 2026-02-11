@@ -13,6 +13,7 @@
 
 #include "../liboc/oc_metadata.hpp"
 #include "../liboc/oc_parser.hpp"
+#include "block_diagram_generator.hpp"
 #include <string>
 #include <sstream>
 #include <vector>
@@ -59,7 +60,8 @@ namespace oc {
         // Write MDL file with best-guess defaults (no metadata)
         [[nodiscard]] auto write_with_defaults(
             const std::vector<parser::oc_file>& oc_files,
-            const std::string& model_name) -> std::string
+            const std::string& model_name,
+            const std::vector<std::string>& raw_sources = {}) -> std::string
         {
             std::ostringstream out;
 
@@ -98,32 +100,60 @@ namespace oc {
             write_part(out, "/simulink/configSetInfo.xml", generate_default_config_set_info());
             write_part(out, "/simulink/modelDictionary.xml", generate_default_model_dictionary(uuid));
 
-            // Count total elements to generate system IDs
-            int total_elements = 0;
+            // Generate subsystem XMLs for each element using block diagram generator
+            // First pass: generate all systems to know total count for .rels
+            struct system_entry {
+                int id;
+                std::string xml;
+            };
+            std::vector<system_entry> all_systems;
+
+            int sys_counter = 0;
+            int source_idx = 0;
+            block_diagram_generator gen;
+            std::vector<int> element_sys_ids;  // track actual system ID per element
+
             for (const auto& file : oc_files) {
+                const auto& raw = (source_idx < static_cast<int>(raw_sources.size()))
+                    ? raw_sources[source_idx] : std::string{};
                 for (const auto& ns : file.namespaces) {
-                    total_elements += static_cast<int>(ns.elements.size());
+                    for (const auto& elem : ns.elements) {
+                        int elem_sys_id = ++sys_counter;
+                        element_sys_ids.push_back(elem_sys_id);
+
+                        if (!raw.empty()) {
+                            auto result = gen.generate(elem, ns.components, raw, sys_counter);
+                            all_systems.push_back({elem_sys_id, result.system_xml});
+
+                            // Add child systems (component subsystems)
+                            for (std::size_t ci = 0; ci < result.child_system_xmls.size(); ++ci) {
+                                int child_id = std::stoi(result.child_system_ids[ci]);
+                                all_systems.push_back({child_id, result.child_system_xmls[ci]});
+                            }
+                        } else {
+                            auto sys_xml = generate_default_element_system(elem, elem_sys_id);
+                            all_systems.push_back({elem_sys_id, sys_xml});
+                        }
+                    }
                 }
+                ++source_idx;
             }
+
+            // Sort systems by ID for consistent output
+            std::sort(all_systems.begin(), all_systems.end(),
+                     [](const auto& a, const auto& b) { return a.id < b.id; });
 
             // Generate .rels for system_root (references all child systems)
             write_part(out, "/simulink/systems/_rels/system_root.xml.rels",
-                       generate_default_system_rels(1, total_elements));
+                       generate_default_system_rels(all_systems));
 
             // Generate system_root with subsystem blocks for each element
-            auto root_xml = generate_default_root_system(oc_files);
+            auto root_xml = generate_default_root_system(oc_files, element_sys_ids);
             write_part(out, "/simulink/systems/system_root.xml", root_xml);
 
-            // Generate subsystem XMLs for each element
-            int sys_counter = 1;
-            for (const auto& file : oc_files) {
-                for (const auto& ns : file.namespaces) {
-                    for (const auto& elem : ns.elements) {
-                        auto sys_xml = generate_default_element_system(elem, sys_counter);
-                        write_part(out, "/simulink/systems/system_" + std::to_string(sys_counter) + ".xml", sys_xml);
-                        ++sys_counter;
-                    }
-                }
+            // Write all system XMLs
+            for (const auto& entry : all_systems) {
+                write_part(out, "/simulink/systems/system_" + std::to_string(entry.id) + ".xml", entry.xml);
             }
 
             write_part(out, "/simulink/windowsInfo.xml", generate_default_windows_info());
@@ -452,7 +482,8 @@ namespace oc {
         // ─── Default system generators ──────────────────────────────────────
 
         [[nodiscard]] auto generate_default_root_system(
-            const std::vector<parser::oc_file>& oc_files) -> std::string
+            const std::vector<parser::oc_file>& oc_files,
+            const std::vector<int>& element_sys_ids = {}) -> std::string
         {
             std::ostringstream out;
             out << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
@@ -470,12 +501,17 @@ namespace oc {
             out << "  <P Name=\"SIDHighWatermark\">" << total_sids << "</P>\n";
 
             int sid = 1;
+            int elem_idx = 0;
             int x = 100;
             int y = 100;
 
             for (const auto& file : oc_files) {
                 for (const auto& ns : file.namespaces) {
                     for (const auto& elem : ns.elements) {
+                        // Use actual system ID if provided, otherwise consecutive
+                        int sys_ref = (!element_sys_ids.empty() && elem_idx < static_cast<int>(element_sys_ids.size()))
+                            ? element_sys_ids[elem_idx] : sid;
+
                         // Count inports/outports from element sections
                         int in_count = 0;
                         int out_count = 0;
@@ -493,12 +529,13 @@ namespace oc {
                         }
                         out << "    <P Name=\"Position\">[" << x << ", " << y << ", " << (x + 120) << ", " << (y + 80) << "]</P>\n";
                         out << "    <P Name=\"ZOrder\">" << sid << "</P>\n";
-                        out << "    <System Ref=\"system_" << sid << "\"/>\n";
+                        out << "    <System Ref=\"system_" << sys_ref << "\"/>\n";
                         out << "  </Block>\n";
 
                         y += 120;
                         if (y > 800) { y = 100; x += 200; }
                         ++sid;
+                        ++elem_idx;
                     }
                 }
             }
@@ -573,6 +610,21 @@ namespace oc {
                 int id = start_id + i;
                 out << "  <Relationship Id=\"system_" << id
                     << "\" Target=\"system_" << id
+                    << ".xml\" Type=\"http://schemas.mathworks.com/simulink/2010/relationships/system\"/>\n";
+            }
+            out << "</Relationships>";
+            return out.str();
+        }
+
+        // Overload that takes a vector of system entries (for block diagram generator output)
+        template <typename T>
+        [[nodiscard]] auto generate_default_system_rels(const std::vector<T>& entries) -> std::string {
+            std::ostringstream out;
+            out << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\" ?>\n";
+            out << "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n";
+            for (const auto& entry : entries) {
+                out << "  <Relationship Id=\"system_" << entry.id
+                    << "\" Target=\"system_" << entry.id
                     << ".xml\" Type=\"http://schemas.mathworks.com/simulink/2010/relationships/system\"/>\n";
             }
             out << "</Relationships>";

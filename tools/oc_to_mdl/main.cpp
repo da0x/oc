@@ -107,6 +107,7 @@ auto main(int argc, char* argv[]) -> int {
 
     // Step 2: Parse each .oc file
     std::vector<oc::parser::oc_file> oc_files;
+    std::vector<std::string> raw_sources;
     bool parse_ok = true;
 
     for (const auto& path : oc_paths) {
@@ -129,6 +130,7 @@ auto main(int argc, char* argv[]) -> int {
         }
 
         oc_files.push_back(std::move(result.file));
+        raw_sources.push_back(std::move(source));
     }
 
     if (!parse_ok) {
@@ -161,7 +163,7 @@ auto main(int argc, char* argv[]) -> int {
         mdl_content = writer.write_with_metadata(*meta);
     } else {
         std::println("No metadata found, generating MDL with best-guess defaults...");
-        mdl_content = writer.write_with_defaults(oc_files, model_name);
+        mdl_content = writer.write_with_defaults(oc_files, model_name, raw_sources);
     }
 
     // Step 5: Write output
