@@ -46,6 +46,17 @@ jobs:
             echo "  Generated ${name}_roundtrip.mdl"
           done
 
+      - name: Best-guess test (oc_to_mdl without metadata)
+        run: |
+          for mdl in models/*.mdl; do
+            name=$(basename "$mdl" .mdl)
+            echo "Best-guess test: $name"
+            mkdir -p "${name}-oc-no-meta"
+            cp "${name}-oc/"*.oc "${name}-oc-no-meta/"
+            ./bin/oc_to_mdl "${name}-oc-no-meta/" -o "${name}_best-guess.mdl"
+            echo "  Generated ${name}_best-guess.mdl"
+          done
+
       - name: Upload generated artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -55,3 +66,4 @@ jobs:
             *-yaml/
             *-cpp/
             *_roundtrip.mdl
+            *_best-guess.mdl
