@@ -165,15 +165,15 @@ namespace oc::codegen {
         return result;
     }
 
-    // Struct to represent a generated function (nested subsystem)
-    struct generated_function {
+    // Struct to represent a generated component (nested subsystem)
+    struct generated_component {
         std::string name;                                              // e.g., "SOGI"
         std::vector<std::pair<std::string, std::string>> inports;      // {name, type}
         std::vector<std::pair<std::string, std::string>> outports;     // {name, type}
         std::vector<std::pair<std::string, std::string>> state_vars;   // {name, comment}
         std::set<std::string> config_vars;
         std::string operation_code;
-        std::vector<generated_function> child_functions;               // recursive children
+        std::vector<generated_component> child_components;             // recursive children
     };
 
     // Struct to hold generated parts for reuse between different output formats
@@ -183,7 +183,7 @@ namespace oc::codegen {
         std::vector<std::pair<std::string, std::string>> state_vars;   // {name, comment}
         std::set<std::string> config_vars;
         std::string operation_code;
-        std::vector<generated_function> functions;                     // nested subsystem functions
+        std::vector<generated_component> components;                   // nested subsystem components
     };
 
     class generator {
@@ -209,34 +209,34 @@ namespace oc::codegen {
             // Collect only local state/config variables (not recursing into subsystems)
             collect_local_variables(sys, std::string(prefix));
 
-            // Generate functions for each subsystem block
-            std::vector<generated_function> functions;
+            // Generate components for each subsystem block
+            std::vector<generated_component> components;
             for (const auto& blk : sys.blocks) {
                 if (!blk.is_subsystem() || blk.subsystem_ref.empty() || !model_) continue;
                 if (auto* subsys = model_->get_system(blk.subsystem_ref)) {
                     mdl::system named_subsys = *subsys;
                     named_subsys.name = blk.name;
-                    auto func = generate_function_parts(named_subsys, 0);
+                    auto comp = generate_component_parts(named_subsys, 0);
 
-                    // Add nested state entry for this function
-                    all_state_vars_.emplace_back(func.name, "function state");
+                    // Add nested state entry for this component
+                    all_state_vars_.emplace_back(comp.name, "component state");
 
-                    // Merge function's config vars into element's config
-                    for (const auto& cv : func.config_vars)
+                    // Merge component's config vars into element's config
+                    for (const auto& cv : comp.config_vars)
                         all_config_vars_.insert(cv);
 
-                    functions.push_back(std::move(func));
+                    components.push_back(std::move(comp));
                 }
             }
 
-            // Build func_map (block SID -> generated_function*) for code generation
-            std::map<std::string, const generated_function*> func_map;
+            // Build component_map (block SID -> generated_component*) for code generation
+            std::map<std::string, const generated_component*> component_map;
             for (const auto& blk : sys.blocks) {
                 if (!blk.is_subsystem()) continue;
                 auto name = sanitize_name(blk.name);
-                for (const auto& f : functions) {
-                    if (f.name == name) {
-                        func_map[blk.sid] = &f;
+                for (const auto& c : components) {
+                    if (c.name == name) {
+                        component_map[blk.sid] = &c;
                         break;
                     }
                 }
@@ -271,7 +271,7 @@ namespace oc::codegen {
                 outports_list.emplace_back(sanitize_name(outp.name), "float");
             }
 
-            // Generate operation code with function calls
+            // Generate operation code with component calls
             std::ostringstream code;
             std::map<std::string, std::string> signal_map;
 
@@ -281,7 +281,7 @@ namespace oc::codegen {
                 signal_map[key] = "in." + sanitize_name(inp.name);
             }
 
-            generate_system_code(sys, std::string(prefix), signal_map, code, 0, func_map);
+            generate_system_code(sys, std::string(prefix), signal_map, code, 0, component_map);
 
             // Generate output assignments
             code << "\n" << indent_ << "// Outputs\n";
@@ -315,15 +315,15 @@ namespace oc::codegen {
                 .state_vars = all_state_vars_,
                 .config_vars = all_config_vars_,
                 .operation_code = code.str(),
-                .functions = std::move(functions)
+                .components = std::move(components)
             };
         }
 
-        // Generate a function representation for a subsystem (recursive)
-        [[nodiscard]] auto generate_function_parts(const mdl::system& sys, int depth) -> generated_function {
+        // Generate a component representation for a subsystem (recursive)
+        [[nodiscard]] auto generate_component_parts(const mdl::system& sys, int depth) -> generated_component {
             if (depth > max_inline_depth_) return {};
 
-            generated_function func;
+            generated_component func;
             func.name = sanitize_name(sys.name.empty() ? sys.id : sys.name);
 
             // Extract inports (sorted by port number)
@@ -377,33 +377,33 @@ namespace oc::codegen {
                 if (auto* subsys = model_->get_system(blk.subsystem_ref)) {
                     mdl::system named_subsys = *subsys;
                     named_subsys.name = blk.name;
-                    auto child = generate_function_parts(named_subsys, depth + 1);
+                    auto child = generate_component_parts(named_subsys, depth + 1);
 
-                    // Add nested state entry for this child function
-                    func.state_vars.emplace_back(child.name, "function state");
+                    // Add nested state entry for this child component
+                    func.state_vars.emplace_back(child.name, "component state");
 
-                    // Merge child's config vars into this function's config
+                    // Merge child's config vars into this component's config
                     for (const auto& cv : child.config_vars)
                         func.config_vars.insert(cv);
 
-                    func.child_functions.push_back(std::move(child));
+                    func.child_components.push_back(std::move(child));
                 }
             }
 
-            // Build child func_map for code generation
-            std::map<std::string, const generated_function*> child_func_map;
+            // Build child_component_map for code generation
+            std::map<std::string, const generated_component*> child_component_map;
             for (const auto& blk : sys.blocks) {
                 if (!blk.is_subsystem()) continue;
                 auto name = sanitize_name(blk.name);
-                for (const auto& cf : func.child_functions) {
+                for (const auto& cf : func.child_components) {
                     if (cf.name == name) {
-                        child_func_map[blk.sid] = &cf;
+                        child_component_map[blk.sid] = &cf;
                         break;
                     }
                 }
             }
 
-            // Generate operation code for the function body
+            // Generate operation code for the component body
             std::ostringstream code;
             std::map<std::string, std::string> signal_map;
 
@@ -413,8 +413,8 @@ namespace oc::codegen {
                 signal_map[key] = "in." + sanitize_name(inp.name);
             }
 
-            // Generate system code with function calls for child subsystems
-            generate_system_code(sys, "", signal_map, code, 0, child_func_map);
+            // Generate system code with component calls for child subsystems
+            generate_system_code(sys, "", signal_map, code, 0, child_component_map);
 
             // Generate output assignments
             code << "\n" << indent_ << "// Outputs\n";
@@ -454,9 +454,9 @@ namespace oc::codegen {
             std::ostringstream out;
             out << "namespace " << ns_name << " {\n\n";
 
-            // Emit all functions depth-first (children before parents)
-            for (const auto& func : parts.functions) {
-                emit_function_cpp(out, func);
+            // Emit all components depth-first (children before parents)
+            for (const auto& comp : parts.components) {
+                emit_component_cpp(out, comp);
             }
 
             // Input struct
@@ -477,8 +477,8 @@ namespace oc::codegen {
             if (!parts.state_vars.empty()) {
                 out << "    struct " << elem_name << "_state {\n";
                 for (const auto& [var, comment] : parts.state_vars) {
-                    bool is_func_state = (comment == "function state");
-                    if (is_func_state) {
+                    bool is_component_state = (comment == "component state");
+                    if (is_component_state) {
                         out << "        " << var << "_state " << var << "{};";
                     } else {
                         out << "        float " << var << " = 0.0f;";
@@ -489,8 +489,8 @@ namespace oc::codegen {
                 out << "    };\n\n";
             }
 
-            // Config struct (emit if there are config vars or functions that need config)
-            bool needs_config = !parts.config_vars.empty() || !parts.functions.empty();
+            // Config struct (emit if there are config vars or components that need config)
+            bool needs_config = !parts.config_vars.empty() || !parts.components.empty();
             if (needs_config) {
                 out << "    struct " << elem_name << "_config {\n";
                 for (const auto& var : parts.config_vars) {
@@ -621,7 +621,7 @@ namespace oc::codegen {
             std::map<std::string, std::string>& signal_map,
             std::ostringstream& code,
             int depth,
-            const std::map<std::string, const generated_function*>& func_map = {})
+            const std::map<std::string, const generated_component*>& component_map = {})
         {
             if (depth > max_inline_depth_) {
                 code << indent_ << "// Max inline depth reached\n";
@@ -761,7 +761,7 @@ namespace oc::codegen {
                 auto out_var = signal_map[sid + "#out:1"];
                 auto state_var = state_var_map.count(sid) ? state_var_map[sid] : "";
 
-                generate_block_code(*blk, inputs, out_var, var_prefix, state_var, signal_map, code, depth, func_map);
+                generate_block_code(*blk, inputs, out_var, var_prefix, state_var, signal_map, code, depth, component_map);
             }
         }
 
@@ -774,7 +774,7 @@ namespace oc::codegen {
             std::map<std::string, std::string>& signal_map,
             std::ostringstream& code,
             int depth,
-            const std::map<std::string, const generated_function*>& func_map = {})
+            const std::map<std::string, const generated_component*>& component_map = {})
         {
             auto get_input = [&](int idx) -> std::string {
                 if (idx < static_cast<int>(inputs.size()) && !inputs[idx].empty()) {
@@ -790,10 +790,10 @@ namespace oc::codegen {
                 return def;
             };
 
-            // Handle SubSystem - use function call if available, otherwise inline
+            // Handle SubSystem - use component call if available, otherwise inline
             if (blk.type == "SubSystem") {
-                if (auto it = func_map.find(blk.sid); it != func_map.end()) {
-                    generate_function_call(*it->second, blk, inputs, var_prefix, signal_map, code);
+                if (auto it = component_map.find(blk.sid); it != component_map.end()) {
+                    generate_component_call(*it->second, blk, inputs, var_prefix, signal_map, code);
                     return;
                 }
                 // Fallback to inline (legacy path)
@@ -1111,9 +1111,9 @@ namespace oc::codegen {
             code << indent_ << "// ─── End: " << blk.name << " ───\n";
         }
 
-        // Generate a function call instead of inlining a subsystem
-        void generate_function_call(
-            const generated_function& func,
+        // Generate a component call instead of inlining a subsystem
+        void generate_component_call(
+            const generated_component& func,
             const mdl::block& blk,
             const std::vector<std::string>& inputs,
             const std::string& var_prefix,
@@ -1123,7 +1123,7 @@ namespace oc::codegen {
             auto func_name = func.name;
             auto local_name = sanitize_name(blk.name);
 
-            code << indent_ << "// Function call: " << blk.name << "\n";
+            code << indent_ << "// Component call: " << blk.name << "\n";
 
             // Construct input struct
             code << indent_ << func_name << "_input " << local_name << "_in{";
@@ -1143,7 +1143,7 @@ namespace oc::codegen {
             // Generate the function call
             code << indent_ << func_name << "_update(" << local_name << "_in, ";
 
-            // Config parameter (always present for functions)
+            // Config parameter (always present for components)
             code << func_name << "_config{";
             bool first = true;
             for (const auto& cv : func.config_vars) {
@@ -1172,11 +1172,11 @@ namespace oc::codegen {
             }
         }
 
-        // Emit C++ code for a function and its children (depth-first)
-        void emit_function_cpp(std::ostringstream& out, const generated_function& func) {
+        // Emit C++ code for a component and its children (depth-first)
+        void emit_component_cpp(std::ostringstream& out, const generated_component& func) {
             // Emit children first (depth-first ordering)
-            for (const auto& child : func.child_functions) {
-                emit_function_cpp(out, child);
+            for (const auto& child : func.child_components) {
+                emit_component_cpp(out, child);
             }
 
             auto fn = func.name;
@@ -1197,8 +1197,8 @@ namespace oc::codegen {
             if (!func.state_vars.empty()) {
                 out << "    struct " << fn << "_state {\n";
                 for (const auto& [var, comment] : func.state_vars) {
-                    bool is_func_state = (comment == "function state");
-                    if (is_func_state) {
+                    bool is_component_state = (comment == "component state");
+                    if (is_component_state) {
                         out << "        " << var << "_state " << var << "{};";
                     } else {
                         out << "        float " << var << " = 0.0f;";
@@ -1209,7 +1209,7 @@ namespace oc::codegen {
                 out << "    };\n\n";
             }
 
-            // Config struct (always present for functions - includes dt)
+            // Config struct (always present for components - includes dt)
             out << "    struct " << fn << "_config {\n";
             for (const auto& var : func.config_vars)
                 out << "        float " << var << " = 0.0f;\n";

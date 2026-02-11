@@ -39,9 +39,9 @@ namespace oc {
 
             out << "namespace " << ns_name << " {\n\n";
 
-            // Emit all functions depth-first (children before parents, before element)
-            for (const auto& func : parts.functions) {
-                write_function(out, func);
+            // Emit all components depth-first (children before parents, before element)
+            for (const auto& comp : parts.components) {
+                write_component(out, comp);
             }
 
             out << "element " << elem_name << " {\n";
@@ -69,8 +69,8 @@ namespace oc {
             if (!parts.state_vars.empty()) {
                 out << "\n    state {\n";
                 for (const auto& [name, comment] : parts.state_vars) {
-                    bool is_func_state = (comment == "function state");
-                    if (is_func_state) {
+                    bool is_component_state = (comment == "component state");
+                    if (is_component_state) {
                         out << "        " << name << " " << name << ";";
                     } else {
                         out << "        float " << name << " = 0.0;";
@@ -82,7 +82,7 @@ namespace oc {
             }
 
             // Config section
-            bool needs_config = !parts.config_vars.empty() || !parts.functions.empty();
+            bool needs_config = !parts.config_vars.empty() || !parts.components.empty();
             if (needs_config) {
                 out << "\n    config {\n";
                 for (const auto& var : parts.config_vars) {
@@ -104,14 +104,14 @@ namespace oc {
         }
 
     private:
-        // Recursively write function blocks (depth-first: children before parents)
-        void write_function(std::ostringstream& out, const codegen::generated_function& func) {
-            // Write child functions first
-            for (const auto& child : func.child_functions) {
-                write_function(out, child);
+        // Recursively write component blocks (depth-first: children before parents)
+        void write_component(std::ostringstream& out, const codegen::generated_component& func) {
+            // Write child components first
+            for (const auto& child : func.child_components) {
+                write_component(out, child);
             }
 
-            out << "function " << func.name << " {\n";
+            out << "component " << func.name << " {\n";
 
             // Input section
             if (!func.inports.empty()) {
@@ -135,8 +135,8 @@ namespace oc {
             if (!func.state_vars.empty()) {
                 out << "    state {\n";
                 for (const auto& [name, comment] : func.state_vars) {
-                    bool is_func_state = (comment == "function state");
-                    if (is_func_state) {
+                    bool is_component_state = (comment == "component state");
+                    if (is_component_state) {
                         out << "        " << name << " " << name << ";";
                     } else {
                         out << "        float " << name << " = 0.0;";
@@ -147,7 +147,7 @@ namespace oc {
                 out << "    }\n";
             }
 
-            // Config section (always present for functions - includes dt)
+            // Config section (always present for components - includes dt)
             out << "    config {\n";
             for (const auto& var : func.config_vars) {
                 out << "        float " << var << ";\n";

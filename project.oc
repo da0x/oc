@@ -112,7 +112,7 @@ out.timestep = timestep;
         }
     }
 
-    function logistic {
+    component logistic {
         input:
             float x;
         output:

@@ -28,7 +28,7 @@ namespace oc::yaml {
         std::string units;
     };
 
-    struct function_schema {
+    struct component_schema {
         std::string name;
         std::vector<signal_def> inputs;
         std::vector<signal_def> outputs;
@@ -45,7 +45,7 @@ namespace oc::yaml {
         std::vector<signal_def> config;
         std::vector<signal_def> outputs;
         std::vector<signal_def> state;
-        std::vector<function_schema> functions;
+        std::vector<component_schema> components;
     };
 
     class writer {
@@ -97,10 +97,10 @@ namespace oc::yaml {
                 out << "\n";
             }
 
-            if (!schema.functions.empty()) {
-                out << "FUNCTIONS:\n";
-                for (const auto& func : schema.functions) {
-                    write_function(out, func, 4);
+            if (!schema.components.empty()) {
+                out << "COMPONENTS:\n";
+                for (const auto& comp : schema.components) {
+                    write_component(out, comp, 4);
                 }
                 out << "\n";
             }
@@ -128,7 +128,7 @@ namespace oc::yaml {
             }
         }
 
-        static void write_function(std::ostringstream& out, const function_schema& func, int indent) {
+        static void write_component(std::ostringstream& out, const component_schema& func, int indent) {
             std::string indent_str(static_cast<std::size_t>(indent), ' ');
 
             out << indent_str << func.name << ":\n";
@@ -257,8 +257,8 @@ namespace oc::yaml {
                 gen.set_model(model_);
                 auto parts = gen.generate_parts(sys, "");
 
-                for (const auto& func : parts.functions) {
-                    collect_functions_flat(func, schema.functions);
+                for (const auto& comp : parts.components) {
+                    collect_components_flat(comp, schema.components);
                 }
             }
 
@@ -266,15 +266,15 @@ namespace oc::yaml {
         }
 
     private:
-        // Flatten the function hierarchy into a list of function schemas
-        static void collect_functions_flat(const codegen::generated_function& func,
-                                           std::vector<function_schema>& out) {
+        // Flatten the component hierarchy into a list of component schemas
+        static void collect_components_flat(const codegen::generated_component& func,
+                                            std::vector<component_schema>& out) {
             // Collect children first (depth-first)
-            for (const auto& child : func.child_functions) {
-                collect_functions_flat(child, out);
+            for (const auto& child : func.child_components) {
+                collect_components_flat(child, out);
             }
 
-            function_schema fs;
+            component_schema fs;
             fs.name = func.name;
 
             for (const auto& [name, type] : func.inports) {
@@ -297,8 +297,8 @@ namespace oc::yaml {
                 signal_def sig;
                 sig.name = name;
                 sig.description = comment;
-                sig.type = (comment == "function state") ? name + "_state" : "float";
-                sig.default_value = (comment == "function state") ? "" : "0.0f";
+                sig.type = (comment == "component state") ? name + "_state" : "float";
+                sig.default_value = (comment == "component state") ? "" : "0.0f";
                 fs.state.push_back(std::move(sig));
             }
 
