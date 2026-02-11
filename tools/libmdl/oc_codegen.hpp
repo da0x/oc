@@ -165,6 +165,17 @@ namespace oc::codegen {
         return result;
     }
 
+    // Struct to represent a generated function (nested subsystem)
+    struct generated_function {
+        std::string name;                                              // e.g., "SOGI"
+        std::vector<std::pair<std::string, std::string>> inports;      // {name, type}
+        std::vector<std::pair<std::string, std::string>> outports;     // {name, type}
+        std::vector<std::pair<std::string, std::string>> state_vars;   // {name, comment}
+        std::set<std::string> config_vars;
+        std::string operation_code;
+        std::vector<generated_function> child_functions;               // recursive children
+    };
+
     // Struct to hold generated parts for reuse between different output formats
     struct generated_parts {
         std::vector<std::pair<std::string, std::string>> inports;      // {name, type}
@@ -172,6 +183,7 @@ namespace oc::codegen {
         std::vector<std::pair<std::string, std::string>> state_vars;   // {name, comment}
         std::set<std::string> config_vars;
         std::string operation_code;
+        std::vector<generated_function> functions;                     // nested subsystem functions
     };
 
     class generator {
@@ -194,8 +206,41 @@ namespace oc::codegen {
             all_state_vars_.clear();
             all_config_vars_.clear();
 
-            // First pass: collect all config and state variables (including from subsystems)
-            collect_all_variables(sys, std::string(prefix), 0);
+            // Collect only local state/config variables (not recursing into subsystems)
+            collect_local_variables(sys, std::string(prefix));
+
+            // Generate functions for each subsystem block
+            std::vector<generated_function> functions;
+            for (const auto& blk : sys.blocks) {
+                if (!blk.is_subsystem() || blk.subsystem_ref.empty() || !model_) continue;
+                if (auto* subsys = model_->get_system(blk.subsystem_ref)) {
+                    mdl::system named_subsys = *subsys;
+                    named_subsys.name = blk.name;
+                    auto func = generate_function_parts(named_subsys, 0);
+
+                    // Add nested state entry for this function
+                    all_state_vars_.emplace_back(func.name, "function state");
+
+                    // Merge function's config vars into element's config
+                    for (const auto& cv : func.config_vars)
+                        all_config_vars_.insert(cv);
+
+                    functions.push_back(std::move(func));
+                }
+            }
+
+            // Build func_map (block SID -> generated_function*) for code generation
+            std::map<std::string, const generated_function*> func_map;
+            for (const auto& blk : sys.blocks) {
+                if (!blk.is_subsystem()) continue;
+                auto name = sanitize_name(blk.name);
+                for (const auto& f : functions) {
+                    if (f.name == name) {
+                        func_map[blk.sid] = &f;
+                        break;
+                    }
+                }
+            }
 
             // Get inputs and outputs
             auto inports = sys.inports();
@@ -226,7 +271,7 @@ namespace oc::codegen {
                 outports_list.emplace_back(sanitize_name(outp.name), "float");
             }
 
-            // Generate operation code
+            // Generate operation code with function calls
             std::ostringstream code;
             std::map<std::string, std::string> signal_map;
 
@@ -236,7 +281,7 @@ namespace oc::codegen {
                 signal_map[key] = "in." + sanitize_name(inp.name);
             }
 
-            generate_system_code(sys, std::string(prefix), signal_map, code, 0);
+            generate_system_code(sys, std::string(prefix), signal_map, code, 0, func_map);
 
             // Generate output assignments
             code << "\n" << indent_ << "// Outputs\n";
@@ -269,8 +314,134 @@ namespace oc::codegen {
                 .outports = std::move(outports_list),
                 .state_vars = all_state_vars_,
                 .config_vars = all_config_vars_,
-                .operation_code = code.str()
+                .operation_code = code.str(),
+                .functions = std::move(functions)
             };
+        }
+
+        // Generate a function representation for a subsystem (recursive)
+        [[nodiscard]] auto generate_function_parts(const mdl::system& sys, int depth) -> generated_function {
+            if (depth > max_inline_depth_) return {};
+
+            generated_function func;
+            func.name = sanitize_name(sys.name.empty() ? sys.id : sys.name);
+
+            // Extract inports (sorted by port number)
+            auto inports = sys.inports();
+            std::ranges::sort(inports, [](const auto& a, const auto& b) {
+                int pa = 1, pb = 1;
+                if (auto v = a.param("Port")) pa = std::stoi(*v);
+                if (auto v = b.param("Port")) pb = std::stoi(*v);
+                return pa < pb;
+            });
+            for (const auto& inp : inports)
+                func.inports.emplace_back(sanitize_name(inp.name), "float");
+
+            // Extract outports (sorted by port number)
+            auto outports = sys.outports();
+            std::ranges::sort(outports, [](const auto& a, const auto& b) {
+                int pa = 1, pb = 1;
+                if (auto v = a.param("Port")) pa = std::stoi(*v);
+                if (auto v = b.param("Port")) pb = std::stoi(*v);
+                return pa < pb;
+            });
+            for (const auto& outp : outports)
+                func.outports.emplace_back(sanitize_name(outp.name), "float");
+
+            // Collect only local state and config vars (not recursing into children)
+            for (const auto& blk : sys.blocks) {
+                auto blk_name = sanitize_name(blk.name);
+
+                if (blk.type == "UnitDelay" || blk.type == "Integrator" ||
+                    blk.type == "DiscreteIntegrator" || blk.type == "Memory") {
+                    func.state_vars.emplace_back(blk_name + "_state",
+                        blk.type + " in " + func.name);
+                }
+
+                if (blk.type == "TransferFcn") {
+                    auto tf = parse_transfer_function(blk);
+                    for (int i = 0; i < tf.order; ++i) {
+                        func.state_vars.emplace_back(blk_name + "_tf_x" + std::to_string(i),
+                            "TransferFcn state " + std::to_string(i) + " in " + func.name);
+                        func.state_vars.emplace_back(blk_name + "_tf_u" + std::to_string(i),
+                            "TransferFcn input history " + std::to_string(i));
+                    }
+                }
+
+                collect_config_from_block_into(blk, func.config_vars);
+            }
+
+            // Process child subsystems recursively
+            for (const auto& blk : sys.blocks) {
+                if (!blk.is_subsystem() || blk.subsystem_ref.empty() || !model_) continue;
+                if (auto* subsys = model_->get_system(blk.subsystem_ref)) {
+                    mdl::system named_subsys = *subsys;
+                    named_subsys.name = blk.name;
+                    auto child = generate_function_parts(named_subsys, depth + 1);
+
+                    // Add nested state entry for this child function
+                    func.state_vars.emplace_back(child.name, "function state");
+
+                    // Merge child's config vars into this function's config
+                    for (const auto& cv : child.config_vars)
+                        func.config_vars.insert(cv);
+
+                    func.child_functions.push_back(std::move(child));
+                }
+            }
+
+            // Build child func_map for code generation
+            std::map<std::string, const generated_function*> child_func_map;
+            for (const auto& blk : sys.blocks) {
+                if (!blk.is_subsystem()) continue;
+                auto name = sanitize_name(blk.name);
+                for (const auto& cf : func.child_functions) {
+                    if (cf.name == name) {
+                        child_func_map[blk.sid] = &cf;
+                        break;
+                    }
+                }
+            }
+
+            // Generate operation code for the function body
+            std::ostringstream code;
+            std::map<std::string, std::string> signal_map;
+
+            // Map inports to input struct
+            for (const auto& inp : inports) {
+                auto key = inp.sid + "#out:1";
+                signal_map[key] = "in." + sanitize_name(inp.name);
+            }
+
+            // Generate system code with function calls for child subsystems
+            generate_system_code(sys, "", signal_map, code, 0, child_func_map);
+
+            // Generate output assignments
+            code << "\n" << indent_ << "// Outputs\n";
+            for (const auto& outp : outports) {
+                for (const auto& conn : sys.connections) {
+                    auto check_dst = [&](const std::string& dst_str) {
+                        if (auto dst = mdl::endpoint::parse(dst_str)) {
+                            if (dst->block_sid == outp.sid) {
+                                if (auto src = mdl::endpoint::parse(conn.source)) {
+                                    auto src_key = src->block_sid + "#out:" + std::to_string(src->port_index);
+                                    if (signal_map.count(src_key)) {
+                                        code << indent_ << "out." << sanitize_name(outp.name)
+                                             << " = " << signal_map[src_key] << ";\n";
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    check_dst(conn.destination);
+                    for (const auto& br : conn.branches) {
+                        check_dst(br.destination);
+                    }
+                }
+            }
+
+            func.operation_code = code.str();
+            return func;
         }
 
         [[nodiscard]] auto generate(const mdl::system& sys, std::string_view ns_name = "generated") -> std::string {
@@ -282,6 +453,11 @@ namespace oc::codegen {
             // Build output
             std::ostringstream out;
             out << "namespace " << ns_name << " {\n\n";
+
+            // Emit all functions depth-first (children before parents)
+            for (const auto& func : parts.functions) {
+                emit_function_cpp(out, func);
+            }
 
             // Input struct
             out << "    struct " << elem_name << "_input {\n";
@@ -301,15 +477,21 @@ namespace oc::codegen {
             if (!parts.state_vars.empty()) {
                 out << "    struct " << elem_name << "_state {\n";
                 for (const auto& [var, comment] : parts.state_vars) {
-                    out << "        float " << var << " = 0.0f;";
+                    bool is_func_state = (comment == "function state");
+                    if (is_func_state) {
+                        out << "        " << var << "_state " << var << "{};";
+                    } else {
+                        out << "        float " << var << " = 0.0f;";
+                    }
                     if (!comment.empty()) out << "  // " << comment;
                     out << "\n";
                 }
                 out << "    };\n\n";
             }
 
-            // Config struct
-            if (!parts.config_vars.empty()) {
+            // Config struct (emit if there are config vars or functions that need config)
+            bool needs_config = !parts.config_vars.empty() || !parts.functions.empty();
+            if (needs_config) {
                 out << "    struct " << elem_name << "_config {\n";
                 for (const auto& var : parts.config_vars) {
                     out << "        float " << var << " = 0.0f;\n";
@@ -321,7 +503,7 @@ namespace oc::codegen {
             // Update function
             out << "    inline auto " << elem_name << "_update(\n";
             out << "        const " << elem_name << "_input& in,\n";
-            if (!parts.config_vars.empty()) {
+            if (needs_config) {
                 out << "        const " << elem_name << "_config& cfg,\n";
             }
             if (!parts.state_vars.empty()) {
@@ -339,7 +521,7 @@ namespace oc::codegen {
         }
 
     private:
-        // Collect all state and config variables recursively
+        // Collect all state and config variables recursively (legacy - kept for reference)
         void collect_all_variables(const mdl::system& sys, const std::string& prefix, int depth) {
             if (depth > max_inline_depth_) return;
 
@@ -381,6 +563,41 @@ namespace oc::codegen {
         }
 
         void collect_config_from_block(const mdl::block& blk) {
+            collect_config_from_block_into(blk, all_config_vars_);
+        }
+
+        // Collect only local state and config variables (no subsystem recursion)
+        void collect_local_variables(const mdl::system& sys, const std::string& prefix) {
+            for (const auto& blk : sys.blocks) {
+                auto var_prefix = prefix.empty() ? sanitize_name(blk.name) : prefix + "_" + sanitize_name(blk.name);
+
+                // State blocks
+                if (blk.type == "UnitDelay" || blk.type == "Integrator" ||
+                    blk.type == "DiscreteIntegrator" || blk.type == "Memory") {
+                    auto state_var = var_prefix + "_state";
+                    auto comment = blk.type + " in " + (prefix.empty() ? "root" : prefix);
+                    all_state_vars_.emplace_back(state_var, comment);
+                }
+
+                // TransferFcn needs state variables based on order
+                if (blk.type == "TransferFcn") {
+                    auto tf = parse_transfer_function(blk);
+                    for (int i = 0; i < tf.order; ++i) {
+                        auto state_var = var_prefix + "_tf_x" + std::to_string(i);
+                        auto comment = "TransferFcn state " + std::to_string(i) + " in " + (prefix.empty() ? "root" : prefix);
+                        all_state_vars_.emplace_back(state_var, comment);
+                        state_var = var_prefix + "_tf_u" + std::to_string(i);
+                        comment = "TransferFcn input history " + std::to_string(i);
+                        all_state_vars_.emplace_back(state_var, comment);
+                    }
+                }
+
+                // Config from block parameters (no subsystem recursion)
+                collect_config_from_block(blk);
+            }
+        }
+
+        static void collect_config_from_block_into(const mdl::block& blk, std::set<std::string>& config) {
             static constexpr std::array param_names = {
                 "Gain", "UpperLimit", "LowerLimit", "Value", "InitialCondition",
                 "Threshold", "Numerator", "Denominator"
@@ -388,12 +605,12 @@ namespace oc::codegen {
 
             for (const auto& pname : param_names) {
                 if (auto v = blk.param(pname)) {
-                    extract_config_vars(*v, all_config_vars_);
+                    extract_config_vars(*v, config);
                 }
             }
 
             for (const auto& mp : blk.mask_parameters) {
-                extract_config_vars(mp.value, all_config_vars_);
+                extract_config_vars(mp.value, config);
             }
         }
 
@@ -403,7 +620,8 @@ namespace oc::codegen {
             const std::string& prefix,
             std::map<std::string, std::string>& signal_map,
             std::ostringstream& code,
-            int depth)
+            int depth,
+            const std::map<std::string, const generated_function*>& func_map = {})
         {
             if (depth > max_inline_depth_) {
                 code << indent_ << "// Max inline depth reached\n";
@@ -431,7 +649,7 @@ namespace oc::codegen {
 
                 int num_outputs = blk.port_out;
 
-                // For subsystems, pre-map outputs to the names that will be created during inlining
+                // For subsystems, pre-map outputs to the names that will be created during inlining/call
                 if (blk.is_subsystem()) {
                     for (int i = 1; i <= num_outputs; ++i) {
                         auto key = blk.sid + "#out:" + std::to_string(i);
@@ -543,7 +761,7 @@ namespace oc::codegen {
                 auto out_var = signal_map[sid + "#out:1"];
                 auto state_var = state_var_map.count(sid) ? state_var_map[sid] : "";
 
-                generate_block_code(*blk, inputs, out_var, var_prefix, state_var, signal_map, code, depth);
+                generate_block_code(*blk, inputs, out_var, var_prefix, state_var, signal_map, code, depth, func_map);
             }
         }
 
@@ -555,7 +773,8 @@ namespace oc::codegen {
             const std::string& state_var,
             std::map<std::string, std::string>& signal_map,
             std::ostringstream& code,
-            int depth)
+            int depth,
+            const std::map<std::string, const generated_function*>& func_map = {})
         {
             auto get_input = [&](int idx) -> std::string {
                 if (idx < static_cast<int>(inputs.size()) && !inputs[idx].empty()) {
@@ -571,8 +790,13 @@ namespace oc::codegen {
                 return def;
             };
 
-            // Handle SubSystem by inlining
+            // Handle SubSystem - use function call if available, otherwise inline
             if (blk.type == "SubSystem") {
+                if (auto it = func_map.find(blk.sid); it != func_map.end()) {
+                    generate_function_call(*it->second, blk, inputs, var_prefix, signal_map, code);
+                    return;
+                }
+                // Fallback to inline (legacy path)
                 if (!blk.subsystem_ref.empty() && model_) {
                     if (auto* subsys = model_->get_system(blk.subsystem_ref)) {
                         generate_subsystem_inline(*subsys, blk, inputs, var_prefix, signal_map, code, depth);
@@ -885,6 +1109,123 @@ namespace oc::codegen {
             }
 
             code << indent_ << "// ─── End: " << blk.name << " ───\n";
+        }
+
+        // Generate a function call instead of inlining a subsystem
+        void generate_function_call(
+            const generated_function& func,
+            const mdl::block& blk,
+            const std::vector<std::string>& inputs,
+            const std::string& var_prefix,
+            std::map<std::string, std::string>& signal_map,
+            std::ostringstream& code)
+        {
+            auto func_name = func.name;
+            auto local_name = sanitize_name(blk.name);
+
+            code << indent_ << "// Function call: " << blk.name << "\n";
+
+            // Construct input struct
+            code << indent_ << func_name << "_input " << local_name << "_in{";
+            for (std::size_t i = 0; i < func.inports.size(); ++i) {
+                if (i > 0) code << ", ";
+                code << "." << func.inports[i].first << " = ";
+                if (i < inputs.size() && !inputs[i].empty())
+                    code << inputs[i];
+                else
+                    code << "0.0f";
+            }
+            code << "};\n";
+
+            // Declare output struct
+            code << indent_ << func_name << "_output " << local_name << "_out{};\n";
+
+            // Generate the function call
+            code << indent_ << func_name << "_update(" << local_name << "_in, ";
+
+            // Config parameter (always present for functions)
+            code << func_name << "_config{";
+            bool first = true;
+            for (const auto& cv : func.config_vars) {
+                if (!first) code << ", ";
+                code << "." << cv << " = cfg." << cv;
+                first = false;
+            }
+            if (!first) code << ", ";
+            code << ".dt = cfg.dt}";
+
+            // State parameter
+            if (!func.state_vars.empty()) {
+                code << ", state." << local_name;
+            }
+
+            // Output parameter
+            code << ", " << local_name << "_out);\n";
+
+            // Extract outputs into alias variables matching the pre-mapped signal names
+            for (std::size_t i = 0; i < func.outports.size(); ++i) {
+                auto out_key = blk.sid + "#out:" + std::to_string(i + 1);
+                auto alias_var = var_prefix + "_out" + std::to_string(i + 1);
+                code << indent_ << "auto " << alias_var << " = "
+                     << local_name << "_out." << func.outports[i].first << ";\n";
+                signal_map[out_key] = alias_var;
+            }
+        }
+
+        // Emit C++ code for a function and its children (depth-first)
+        void emit_function_cpp(std::ostringstream& out, const generated_function& func) {
+            // Emit children first (depth-first ordering)
+            for (const auto& child : func.child_functions) {
+                emit_function_cpp(out, child);
+            }
+
+            auto fn = func.name;
+
+            // Input struct
+            out << "    struct " << fn << "_input {\n";
+            for (const auto& [name, type] : func.inports)
+                out << "        " << type << " " << name << " = 0.0f;\n";
+            out << "    };\n\n";
+
+            // Output struct
+            out << "    struct " << fn << "_output {\n";
+            for (const auto& [name, type] : func.outports)
+                out << "        " << type << " " << name << " = 0.0f;\n";
+            out << "    };\n\n";
+
+            // State struct
+            if (!func.state_vars.empty()) {
+                out << "    struct " << fn << "_state {\n";
+                for (const auto& [var, comment] : func.state_vars) {
+                    bool is_func_state = (comment == "function state");
+                    if (is_func_state) {
+                        out << "        " << var << "_state " << var << "{};";
+                    } else {
+                        out << "        float " << var << " = 0.0f;";
+                    }
+                    if (!comment.empty()) out << "  // " << comment;
+                    out << "\n";
+                }
+                out << "    };\n\n";
+            }
+
+            // Config struct (always present for functions - includes dt)
+            out << "    struct " << fn << "_config {\n";
+            for (const auto& var : func.config_vars)
+                out << "        float " << var << " = 0.0f;\n";
+            out << "        float dt = 0.001f;  // sample time\n";
+            out << "    };\n\n";
+
+            // Update function
+            out << "    inline auto " << fn << "_update(\n";
+            out << "        const " << fn << "_input& in,\n";
+            out << "        const " << fn << "_config& cfg,\n";
+            if (!func.state_vars.empty())
+                out << "        " << fn << "_state& state,\n";
+            out << "        " << fn << "_output& out) -> void\n";
+            out << "    {\n";
+            out << func.operation_code;
+            out << "    }\n\n";
         }
 
         static void extract_config_vars(std::string_view expr, std::set<std::string>& vars) {

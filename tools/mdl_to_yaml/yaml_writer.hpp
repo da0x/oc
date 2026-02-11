@@ -12,6 +12,7 @@
 #pragma once
 
 #include "../libmdl/oc_mdl.hpp"
+#include "../libmdl/oc_codegen.hpp"
 #include <sstream>
 #include <set>
 #include <array>
@@ -27,6 +28,14 @@ namespace oc::yaml {
         std::string units;
     };
 
+    struct function_schema {
+        std::string name;
+        std::vector<signal_def> inputs;
+        std::vector<signal_def> outputs;
+        std::vector<signal_def> state;
+        std::vector<signal_def> config;
+    };
+
     struct element_schema {
         std::string name;
         std::string description;
@@ -36,6 +45,7 @@ namespace oc::yaml {
         std::vector<signal_def> config;
         std::vector<signal_def> outputs;
         std::vector<signal_def> state;
+        std::vector<function_schema> functions;
     };
 
     class writer {
@@ -87,6 +97,14 @@ namespace oc::yaml {
                 out << "\n";
             }
 
+            if (!schema.functions.empty()) {
+                out << "FUNCTIONS:\n";
+                for (const auto& func : schema.functions) {
+                    write_function(out, func, 4);
+                }
+                out << "\n";
+            }
+
             return out.str();
         }
 
@@ -106,6 +124,56 @@ namespace oc::yaml {
                 }
                 if (!sig.units.empty()) {
                     out << indent_str << "    units: '" << sig.units << "'\n";
+                }
+            }
+        }
+
+        static void write_function(std::ostringstream& out, const function_schema& func, int indent) {
+            std::string indent_str(static_cast<std::size_t>(indent), ' ');
+
+            out << indent_str << func.name << ":\n";
+
+            if (!func.inputs.empty()) {
+                out << indent_str << "    IN:\n";
+                for (const auto& sig : func.inputs) {
+                    out << indent_str << "        " << sig.name << ": { type: " << sig.type;
+                    if (!sig.default_value.empty()) {
+                        out << ", default: " << sig.default_value;
+                    }
+                    out << " }\n";
+                }
+            }
+
+            if (!func.outputs.empty()) {
+                out << indent_str << "    OUT:\n";
+                for (const auto& sig : func.outputs) {
+                    out << indent_str << "        " << sig.name << ": { type: " << sig.type;
+                    if (!sig.default_value.empty()) {
+                        out << ", default: " << sig.default_value;
+                    }
+                    out << " }\n";
+                }
+            }
+
+            if (!func.state.empty()) {
+                out << indent_str << "    STATE:\n";
+                for (const auto& sig : func.state) {
+                    out << indent_str << "        " << sig.name << ": { type: " << sig.type;
+                    if (!sig.default_value.empty()) {
+                        out << ", default: " << sig.default_value;
+                    }
+                    out << " }\n";
+                }
+            }
+
+            if (!func.config.empty()) {
+                out << indent_str << "    CONFIG:\n";
+                for (const auto& sig : func.config) {
+                    out << indent_str << "        " << sig.name << ": { type: " << sig.type;
+                    if (!sig.default_value.empty()) {
+                        out << ", default: " << sig.default_value;
+                    }
+                    out << " }\n";
                 }
             }
         }
@@ -183,10 +251,75 @@ namespace oc::yaml {
             std::set<std::string> seen_params;
             extract_config_recursive(sys, schema.config, schema.state, seen_params, 0);
 
+            // Generate functions using codegen
+            if (model_) {
+                codegen::generator gen;
+                gen.set_model(model_);
+                auto parts = gen.generate_parts(sys, "");
+
+                for (const auto& func : parts.functions) {
+                    collect_functions_flat(func, schema.functions);
+                }
+            }
+
             return schema;
         }
 
     private:
+        // Flatten the function hierarchy into a list of function schemas
+        static void collect_functions_flat(const codegen::generated_function& func,
+                                           std::vector<function_schema>& out) {
+            // Collect children first (depth-first)
+            for (const auto& child : func.child_functions) {
+                collect_functions_flat(child, out);
+            }
+
+            function_schema fs;
+            fs.name = func.name;
+
+            for (const auto& [name, type] : func.inports) {
+                signal_def sig;
+                sig.name = name;
+                sig.type = type;
+                sig.default_value = "0.0f";
+                fs.inputs.push_back(std::move(sig));
+            }
+
+            for (const auto& [name, type] : func.outports) {
+                signal_def sig;
+                sig.name = name;
+                sig.type = type;
+                sig.default_value = "0.0f";
+                fs.outputs.push_back(std::move(sig));
+            }
+
+            for (const auto& [name, comment] : func.state_vars) {
+                signal_def sig;
+                sig.name = name;
+                sig.description = comment;
+                sig.type = (comment == "function state") ? name + "_state" : "float";
+                sig.default_value = (comment == "function state") ? "" : "0.0f";
+                fs.state.push_back(std::move(sig));
+            }
+
+            for (const auto& var : func.config_vars) {
+                signal_def sig;
+                sig.name = var;
+                sig.type = "float";
+                sig.default_value = "0.0f";
+                fs.config.push_back(std::move(sig));
+            }
+
+            // Always add dt to config
+            signal_def dt_sig;
+            dt_sig.name = "dt";
+            dt_sig.type = "float";
+            dt_sig.default_value = "0.001";
+            fs.config.push_back(std::move(dt_sig));
+
+            out.push_back(std::move(fs));
+        }
+
         void extract_config_recursive(const mdl::system& sys,
                                        std::vector<signal_def>& config,
                                        std::vector<signal_def>& state,

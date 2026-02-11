@@ -35,36 +35,46 @@ namespace oc {
             gen.set_model(model_);
 
             // Get generated info from codegen
-            auto [inports_list, outports_list, state_vars, config_vars, operation_code] =
-                gen.generate_parts(sys, "");
+            auto parts = gen.generate_parts(sys, "");
 
             out << "namespace " << ns_name << " {\n\n";
+
+            // Emit all functions depth-first (children before parents, before element)
+            for (const auto& func : parts.functions) {
+                write_function(out, func);
+            }
+
             out << "element " << elem_name << " {\n";
             out << "    frequency: 1kHz;\n";
 
             // Input section
-            if (!inports_list.empty()) {
+            if (!parts.inports.empty()) {
                 out << "\n    input {\n";
-                for (const auto& [name, type] : inports_list) {
+                for (const auto& [name, type] : parts.inports) {
                     out << "        " << type << " " << name << ";\n";
                 }
                 out << "    }\n";
             }
 
             // Output section
-            if (!outports_list.empty()) {
+            if (!parts.outports.empty()) {
                 out << "\n    output {\n";
-                for (const auto& [name, type] : outports_list) {
+                for (const auto& [name, type] : parts.outports) {
                     out << "        " << type << " " << name << ";\n";
                 }
                 out << "    }\n";
             }
 
             // State section
-            if (!state_vars.empty()) {
+            if (!parts.state_vars.empty()) {
                 out << "\n    state {\n";
-                for (const auto& [name, comment] : state_vars) {
-                    out << "        float " << name << " = 0.0;";
+                for (const auto& [name, comment] : parts.state_vars) {
+                    bool is_func_state = (comment == "function state");
+                    if (is_func_state) {
+                        out << "        " << name << " " << name << ";";
+                    } else {
+                        out << "        float " << name << " = 0.0;";
+                    }
                     if (!comment.empty()) out << "  // " << comment;
                     out << "\n";
                 }
@@ -72,9 +82,10 @@ namespace oc {
             }
 
             // Config section
-            if (!config_vars.empty()) {
+            bool needs_config = !parts.config_vars.empty() || !parts.functions.empty();
+            if (needs_config) {
                 out << "\n    config {\n";
-                for (const auto& var : config_vars) {
+                for (const auto& var : parts.config_vars) {
                     out << "        float " << var << ";\n";
                 }
                 out << "        float dt = 0.001;  // sample time\n";
@@ -83,13 +94,73 @@ namespace oc {
 
             // Operation section - uses the shared code generator
             out << "\n    update {\n";
-            out << operation_code;
+            out << parts.operation_code;
             out << "    }\n";
 
             out << "}\n\n";
             out << "} // namespace " << ns_name << "\n";
 
             return out.str();
+        }
+
+    private:
+        // Recursively write function blocks (depth-first: children before parents)
+        void write_function(std::ostringstream& out, const codegen::generated_function& func) {
+            // Write child functions first
+            for (const auto& child : func.child_functions) {
+                write_function(out, child);
+            }
+
+            out << "function " << func.name << " {\n";
+
+            // Input section
+            if (!func.inports.empty()) {
+                out << "    input {\n";
+                for (const auto& [name, type] : func.inports) {
+                    out << "        " << type << " " << name << ";\n";
+                }
+                out << "    }\n";
+            }
+
+            // Output section
+            if (!func.outports.empty()) {
+                out << "    output {\n";
+                for (const auto& [name, type] : func.outports) {
+                    out << "        " << type << " " << name << ";\n";
+                }
+                out << "    }\n";
+            }
+
+            // State section
+            if (!func.state_vars.empty()) {
+                out << "    state {\n";
+                for (const auto& [name, comment] : func.state_vars) {
+                    bool is_func_state = (comment == "function state");
+                    if (is_func_state) {
+                        out << "        " << name << " " << name << ";";
+                    } else {
+                        out << "        float " << name << " = 0.0;";
+                    }
+                    if (!comment.empty()) out << "  // " << comment;
+                    out << "\n";
+                }
+                out << "    }\n";
+            }
+
+            // Config section (always present for functions - includes dt)
+            out << "    config {\n";
+            for (const auto& var : func.config_vars) {
+                out << "        float " << var << ";\n";
+            }
+            out << "        float dt = 0.001;  // sample time\n";
+            out << "    }\n";
+
+            // Update section
+            out << "    update {\n";
+            out << func.operation_code;
+            out << "    }\n";
+
+            out << "}\n\n";
         }
     };
 
