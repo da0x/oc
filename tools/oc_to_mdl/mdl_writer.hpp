@@ -97,6 +97,18 @@ namespace oc {
             write_part(out, "/simulink/configSetInfo.xml", generate_default_config_set_info());
             write_part(out, "/simulink/modelDictionary.xml", generate_default_model_dictionary());
 
+            // Count total elements to generate system IDs
+            int total_elements = 0;
+            for (const auto& file : oc_files) {
+                for (const auto& ns : file.namespaces) {
+                    total_elements += static_cast<int>(ns.elements.size());
+                }
+            }
+
+            // Generate .rels for system_root (references all child systems)
+            write_part(out, "/simulink/systems/_rels/system_root.xml.rels",
+                       generate_default_system_rels(1, total_elements));
+
             // Generate system_root with subsystem blocks for each element
             auto root_xml = generate_default_root_system(oc_files);
             write_part(out, "/simulink/systems/system_root.xml", root_xml);
@@ -440,6 +452,15 @@ namespace oc {
             out << "  <P Name=\"Location\">[-1, -8, 1921, 1153]</P>\n";
             out << "  <P Name=\"ZoomFactor\">100</P>\n";
 
+            // Count total elements for SIDHighWatermark
+            int total_sids = 0;
+            for (const auto& file : oc_files) {
+                for (const auto& ns : file.namespaces) {
+                    total_sids += static_cast<int>(ns.elements.size());
+                }
+            }
+            out << "  <P Name=\"SIDHighWatermark\">" << total_sids << "</P>\n";
+
             int sid = 1;
             int x = 100;
             int y = 100;
@@ -531,6 +552,22 @@ namespace oc {
             }
 
             out << "</System>";
+            return out.str();
+        }
+
+        // ─── System .rels generators ────────────────────────────────────────
+
+        [[nodiscard]] auto generate_default_system_rels(int start_id, int count) -> std::string {
+            std::ostringstream out;
+            out << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\" ?>\n";
+            out << "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n";
+            for (int i = 0; i < count; ++i) {
+                int id = start_id + i;
+                out << "  <Relationship Id=\"system_" << id
+                    << "\" Target=\"system_" << id
+                    << ".xml\" Type=\"http://schemas.mathworks.com/simulink/2010/relationships/system\"/>\n";
+            }
+            out << "</Relationships>";
             return out.str();
         }
 
